@@ -117,6 +117,30 @@ class Controller: UITableViewController {
 extension Controller: NSFetchedResultsControllerDelegate {
     func controller(_ controller: NSFetchedResultsController<NSFetchRequestResult>, didChangeContentWith snapshot: NSDiffableDataSourceSnapshotReference) {
         let diffableDataSource = tableView.dataSource as! UITableViewDiffableDataSource<String, NSManagedObjectID>
-        diffableDataSource.apply(snapshot as NSDiffableDataSourceSnapshot, animatingDifferences: true)
+        let snapshot = snapshot as NSDiffableDataSourceSnapshot<String, NSManagedObjectID>
+        let temporaryIDs = snapshot.itemIdentifiers.filter(\.isTemporaryID)
+        let temporaryObjects = Dictionary(
+            uniqueKeysWithValues: zip(
+                temporaryIDs,
+                temporaryIDs.map(controller.managedObjectContext.object(with:))
+            )
+        )
+        try! controller.managedObjectContext.obtainPermanentIDs(for: .init(temporaryObjects.values))
+        let newSnapshot = snapshot.map { objectID in
+            temporaryObjects[objectID]?.objectID ?? objectID
+        }
+        diffableDataSource.apply(newSnapshot, animatingDifferences: true)
     }
 }
+
+extension NSDiffableDataSourceSnapshot {
+    func map<T>(_ transform: (ItemIdentifierType) throws -> T) rethrows -> NSDiffableDataSourceSnapshot<SectionIdentifierType, T> where T: Hashable, T: Sendable {
+        var snapshot = NSDiffableDataSourceSnapshot<SectionIdentifierType, T>()
+        for section in sectionIdentifiers {
+            snapshot.appendSections([section])
+            snapshot.appendItems(try itemIdentifiers(inSection: section).map(transform))
+        }
+        return snapshot
+    }
+}
+
